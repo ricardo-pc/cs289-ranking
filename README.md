@@ -47,6 +47,8 @@ python src/sparsity.py --densities 0.2 0.4 0.6 0.8 1.0
 - TBD
 
 
+## Folder Structure (example)
+```
 cs289-ranking/
 ├── data/
 │   └── .gitkeep
@@ -65,3 +67,4 @@ cs289-ranking/
 ├── report/
 ├── requirements.txt
 └── README.md
+```
