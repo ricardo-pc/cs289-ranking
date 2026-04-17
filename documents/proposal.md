@@ -8,7 +8,7 @@ Ricardo Perez Castillo, Teammate 2, Teammate 3
 
 ## What we're doing and why
 
-We're building three recommendation systems of increasing complexity and measuring how each one performs as we artificially reduce how much data each user has. The goal is to find the **crossover point**: the number of per-user interactions below which the more complex ranking stage stops helping and may even hurt.
+We're building three recommendation systems of increasing complexity and measuring how each one performs as we artificially reduce how much data each user has. The goal is to find the crossover point: the number of per-user interactions below which the more complex ranking stage stops helping and may even hurt.
 
 ### The three systems
 
@@ -16,7 +16,7 @@ We're building three recommendation systems of increasing complexity and measuri
 |--------|-------------|------------|
 | **A: Matrix Factorization (MF)** | Learns a user embedding and an item embedding, scores by dot product. This is the simplest collaborative filtering baseline. | Low |
 | **B: Neural Collaborative Filtering (NCF)** | Same embeddings, but replaces the dot product with a multi-layer perceptron (MLP). Can capture nonlinear user-item interactions. | Medium |
-| **C: MF + Ranking MLP** | Uses MF to retrieve a candidate set, then a second MLP re-ranks those candidates. The ranker is trained with Bayesian Personalized Ranking (BPR) loss — a pairwise objective that pushes the score of observed (positive) items above unobserved (negative) items. | High |
+| **C: MF + Ranking MLP** | Uses MF to retrieve a candidate set, then a second MLP re-ranks those candidates. The ranker is trained with Bayesian Personalized Ranking (BPR) loss, a pairwise objective that pushes the score of observed (positive) items above unobserved (negative) items. | High |
 
 ### The sparsity experiment
 
@@ -27,7 +27,7 @@ For each user, we subsample their training interactions to **80%, 60%, 40%, and 
 - **NDCG@10** (Normalized Discounted Cumulative Gain at 10): measures ranking quality of the top 10 recommendations, giving more credit to relevant items ranked higher.
 - **Hit Rate@10**: binary — did the held-out item appear anywhere in the top 10?
 
-Both are standard in the RecSys literature and are what He et al. (2017) use.
+These metrics are standard in the RecSys literature and are what He et al. (2017) use.
 
 ### Dataset
 
@@ -35,13 +35,13 @@ Both are standard in the RecSys literature and are what He et al. (2017) use.
 
 ---
 
-## Why this project (the real motivation)
+## Why this project (real motivation)
 
 ### For the class
-The rubric rewards a **controlled comparison under matched conditions** with a clear hypothesis. Our hypothesis is that more expressive models degrade faster under sparsity due to higher variance (bias-variance tradeoff from lecture). The sparsity sweep is the experiment we designed, and the crossover point is the finding.
+The rubric rewards a controlled comparison under matched conditions with a clear hypothesis. Our hypothesis is that more expressive models degrade faster under sparsity due to higher variance (bias-variance tradeoff from lecture). The sparsity sweep is the experiment we designed, and the crossover point is the finding.
 
 ### For interviews
-This project maps directly to real data science roles at companies like Uber, Spotify, and any two-sided marketplace. The core insight — "complex ranking models stop helping for cold-start users" — has immediate business implications:
+This project maps directly to real data science roles at companies like Uber, Spotify, and any two-sided marketplace. The core insight "complex ranking models stop helping for cold-start users", has immediate business implications:
 - Where should you invest modeling complexity vs. fall back to simpler heuristics?
 - How much user data do you need before deploying a ranker for a new user segment?
 - For new users entering a platform continuously, what's the right system to serve them?
@@ -50,9 +50,7 @@ The interview pitch: *"I studied when adding a ranking stage on top of collabora
 
 ---
 
-## Course connections (for the report)
-
-These are the specific ties to CS 289A content we'll reference:
+## Course connections 
 
 | Course topic | How it shows up |
 |-------------|----------------|
@@ -67,33 +65,20 @@ These are the specific ties to CS 289A content we'll reference:
 
 ## Division of responsibilities
 
-*Fill this in once team is finalized. Suggested split:*
-
 | Member | Responsibilities |
 |--------|-----------------|
-| Ricardo | MF and NCF implementation, training pipeline, embedding visualization, GitHub repo |
-| Teammate 2 | Ranking MLP with BPR loss, evaluation metrics (NDCG@10, HR@10), results analysis |
-| Teammate 3 | Sparsity subsampling framework, figures/plots, report writing and framing |
-| All | Dataset preprocessing, final report, code review |
+| Ricardo | TBD |
+| Teammate 2 | TBD |
+| Teammate 3 | TBD |
+| All | TBD |
 
 ---
 
-## Detailed timeline
-
-| Week | Dates | Milestone | Details |
-|------|-------|-----------|---------|
-| 0 | By Apr 17 | Proposal + MF baseline | Download MovieLens 1M, EDA (rating distribution, per-user counts), implement MF, get first NDCG@10 numbers |
-| 1 | Apr 18-24 | NCF + System A vs B | Implement NCF, train both systems with matched hyperparameters (same k, same split), compare at full density |
-| 2 | Apr 25 - May 1 | Ranking MLP + sparsity sweep | Implement BPR ranking MLP, build subsampling framework, run all 3 systems at 100/80/60/40/20% density |
-| 3 | May 2-8 | Figures + report draft | Generate main figures (NDCG@10 vs density curves, crossover plot), draft report sections, write GitHub README |
-| 4 | May 9-15 | Polish + submit | Revise report, code cleanup, ensure reproducibility, final submission |
-
----
 
 ## Implementation notes
 
 ### Key decisions to make early
-- **Embedding dimension k**: start with k=64, might sweep {32, 64, 128}
+- **Embedding dimension k**: MAYBE start with k=64, might sweep {32, 64, 128}
 - **Train/test split**: leave-one-out (standard for MovieLens evaluations)
 - **Negative sampling**: sample 99 negatives per positive for evaluation (standard protocol)
 - **Candidate set size for System C**: MF retrieves top-100 candidates, ranker reranks to top-10
@@ -102,7 +87,7 @@ These are the specific ties to CS 289A content we'll reference:
 - **PyTorch** for all models
 - **NumPy/Pandas** for data processing
 - **Matplotlib/Seaborn** for figures
-- Consider **Weights & Biases** for experiment tracking (the rubric's practical advice says "log everything")
+- Consider **Weights & Biases** for experiment tracking (rubric's practical advice says "log everything")
 
 ### What the main figure should look like
 An x-axis of per-user interaction density (20%, 40%, 60%, 80%, 100%) with three lines (Systems A, B, C) showing NDCG@10. The crossover point — where System A overtakes B and/or C — is the key finding. A second panel or subplot for HR@10.
