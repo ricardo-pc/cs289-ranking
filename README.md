@@ -25,8 +25,10 @@ comparing three systems of increasing complexity on MovieLens 1M:
 
 ```bash
 pip install -r requirements.txt
-# Download MovieLens 1M to data/ from https://grouplens.org/datasets/movielens/1m/
+bash download_data.sh        # downloads MovieLens 1M into data/raw/ml-1m/
 ```
+
+> **Note:** We use **MovieLens 1M** (not ml-32m or movie_dataset_public_final). The download script fetches exactly the right version. Data is excluded from the repo per the GroupLens redistribution license.
 
 ## Reproducing results
 

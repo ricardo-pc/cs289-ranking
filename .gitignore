@@ -1,0 +1,17 @@
+data/raw/ml-1m/
+data/raw/ml-1m.zip
+data/raw/ml-32m/
+data/raw/ml-32m.zip
+data/raw/movie_dataset_public_final/
+data/processed/
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+.ipynb_checkpoints/
+wandb/
+runs/
+*.pth
+*.pt
+.claude
+
