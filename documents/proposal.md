@@ -64,7 +64,7 @@ $$c_{ui} = 1 + \alpha \cdot r_{ui}$$
 where $r_{ui}$ is the star rating (1–5) and $\alpha$ is a tunable hyperparameter.
 This preserves the information in star ratings without discarding low-rated interactions
 entirely. A 5-star rating contributes ~5× more signal than a 1-star. $\alpha$ is tuned
-via Bayesian Optimization (see cross-project note below).
+via Bayesian Optimization alongside the other NCF hyperparameters.
 
 **Train / val / test split — He et al. (2017) leave-one-out protocol**
 - **TEST**: last interaction per user (by timestamp)
@@ -106,7 +106,9 @@ Same user/item embeddings as MF, but the score is computed by a small MLP instea
 dot product: $\hat{r}_{ui} = \text{MLP}([u_u \| v_i])$.
 Loss: same confidence-weighted BCE.
 Hyperparameters (embedding dim, MLP hidden sizes, learning rate, L2 regularization, $\alpha$)
-tuned via Bayesian Optimization — see cross-project note.
+tuned via Bayesian Optimization using a Gaussian Process surrogate and Expected Improvement
+acquisition function. The best configuration found by BO is used as the NCF baseline for
+the sparsity sweep.
 
 ### MF + Ranking MLP (System C)
 **Stage 1 (retrieval):** MF scores all items for each user; top-100 candidates selected.
@@ -118,21 +120,6 @@ a pairwise objective that pushes observed items above unobserved ones.
 All three systems are retrained from scratch at each density level `d`. This gives 15
 independent training runs (3 systems × 5 densities). Results are plotted as NDCG@10
 vs. density — the crossover point is the key finding.
-
----
-
-## Cross-Project Note (STAT 238 — Bayesian Optimization)
-
-A concurrent solo project in STAT 238 implements Bayesian Optimization using a Gaussian
-Process surrogate and Expected Improvement acquisition function. One of its two experiments
-tunes NCF hyperparameters on this exact dataset, with validation NDCG@10 as the objective.
-
-**Dependency:** NCF must be training cleanly before the BO sweep can run (~25–30 evals,
-~3–5 min each on the GPU cluster). The best hyperparameter configuration found by BO
-(including $\alpha$) flows back into this project as the NCF baseline for the sparsity sweep.
-
-**What this means for sequencing:** NCF implementation is on the critical path for both
-projects. Target: working NCF by May 3–4.
 
 ---
 
@@ -159,7 +146,7 @@ dominates and simpler models win. The sparsity sweep makes this concrete and mea
 | Date | Milestone |
 |------|-----------|
 | May 3–4 | NCF training pipeline complete and validated |
-| May 4–5 | BO sweep kicked off on SCF (STAT 238 Exp. 2) |
+| May 4–5 | BO sweep kicked off on SCF to tune NCF hyperparameters |
 | May 5–6 | MF baseline + two-stage ranker implemented |
 | May 6–8 | Full sparsity sweep running (15 conditions) |
 | May 8–9 | BO results back → NCF hyperparameters locked |
