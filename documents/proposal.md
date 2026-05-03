@@ -113,8 +113,8 @@ the sparsity sweep.
 ### MF + Ranking MLP (System C)
 **Stage 1 (retrieval):** MF scores all items for each user; top-100 candidates selected.
 **Stage 2 (ranking):** A separate MLP re-ranks the 100 candidates.
-The ranker is trained with BPR loss: $\mathcal{L}_\text{BPR} = -\sum \log \sigma(\hat{r}_{ui} - \hat{r}_{uj})$,
-a pairwise objective that pushes observed items above unobserved ones.
+The ranker is trained with BPR loss — a pairwise objective that pushes the score of observed
+items above unobserved ones: $L_{\text{BPR}} = -\sum \log \sigma(\hat{r}_{ui} - \hat{r}_{uj})$
 
 ### Sparsity sweep
 All three systems are retrained from scratch at each density level `d`. This gives 15
