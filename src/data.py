@@ -33,14 +33,15 @@ from torch.utils.data import Dataset
 @dataclass
 class ML1MData:
     """Holds all splits and metadata after preprocessing."""
-    train: pd.DataFrame          # columns: user, item  (subsampled at density d)
-    val:   pd.DataFrame          # one row per user — the second-to-last interaction
-    test:  pd.DataFrame          # one row per user — the last interaction
+    train: pd.DataFrame          # columns: user, item, rating  (subsampled at density d)
+    val:   pd.DataFrame          # columns: user, item — one row per user (second-to-last)
+    test:  pd.DataFrame          # columns: user, item — one row per user (last)
     n_users: int
     n_items: int
     user2idx: Dict[int, int]     # original ID -> 0-indexed
     item2idx: Dict[int, int]
     all_items: np.ndarray        # all valid item indices (for negative sampling)
+    density: float               # fraction of training interactions kept (1.0 = full)
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +85,10 @@ def load_ml1m(data_dir: str, density: float = 1.0, seed: int = 42) -> ML1MData:
     second_last = ratings.groupby("user").nth(-2)[["user", "item"]].reset_index(drop=True)
 
     # Training pool: everything except the last two interactions per user
+    # Keep rating column — needed for WMF confidence weights: c_ui = 1 + alpha * rating
     test_idx  = ratings.groupby("user").tail(1).index
     val_idx   = ratings.groupby("user").tail(2).index.difference(test_idx)
-    train_all = ratings.drop(index=test_idx.union(val_idx))[["user", "item"]].reset_index(drop=True)
+    train_all = ratings.drop(index=test_idx.union(val_idx))[["user", "item", "rating"]].reset_index(drop=True)
 
     train = _subsample(train_all, density, seed)
 
@@ -99,8 +101,13 @@ def load_ml1m(data_dir: str, density: float = 1.0, seed: int = 42) -> ML1MData:
         user2idx=user2idx,
         item2idx=item2idx,
         all_items=np.arange(n_items, dtype=np.int32),
+        density=density,
     )
 
+
+# insight: subsampling happens per user
+# a user with 94 interactions at 60% density keeps 56, and a user with 25 interactions at 60% keeps 15
+# The density is applied proportionally so every user experiences the same level of sparsity
 
 def _subsample(train: pd.DataFrame, density: float, seed: int) -> pd.DataFrame:
     """Keep `density` fraction of each user's training interactions (min 1)."""
@@ -112,6 +119,8 @@ def _subsample(train: pd.DataFrame, density: float, seed: int) -> pd.DataFrame:
         n = max(1, int(len(group) * density))
         parts.append(group.sample(n=n, random_state=int(rng.integers(1 << 31))))
     return pd.concat(parts, ignore_index=True)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +138,16 @@ def build_eval_negatives(
 
     Negatives are fixed for the entire experiment so results are
     comparable across models and density levels.
+
+    IMPORTANT: always call this on full-density data (density=1.0).
+    If called on subsampled data, items the user rated but were dropped
+    from training could leak into the negative pool, corrupting evaluation.
     """
+    assert data.density == 1.0, (
+        "build_eval_negatives must be called on full-density data (density=1.0). "
+        "Call load_ml1m with density=1.0, build negatives once, then reuse them "
+        "across all density conditions."
+    )
     rng = random.Random(seed)
 
     # Full set of items each user has seen (train + val + test)
@@ -156,8 +174,14 @@ class TrainDataset(Dataset):
     """
     Implicit feedback training dataset with online negative sampling.
 
-    Each __getitem__ returns (user, pos_item, neg_item).
-    Used for BPR loss (ranker) or binary cross-entropy with negatives (NCF/MF).
+    Each __getitem__ returns (user, pos_item, pos_rating, neg_item).
+
+    pos_rating is the raw star rating (1-5) for the positive interaction.
+    The training loop uses it to compute the WMF confidence weight:
+        c_ui = 1 + alpha * pos_rating
+    Negatives are unobserved and always get confidence = 1 (handled in train.py).
+
+    Used for confidence-weighted BCE (MF, NCF) and BPR loss (ranker).
     """
 
     def __init__(self, data: ML1MData, n_neg_per_pos: int = 4, seed: int = 42):
@@ -171,26 +195,30 @@ class TrainDataset(Dataset):
             self.user_pos.setdefault(row.user, set()).add(row.item)
 
         # Expand: one row per (user, pos_item) x n_neg_per_pos
-        users = data.train["user"].to_numpy(dtype=np.int64)
-        items = data.train["item"].to_numpy(dtype=np.int64)
-        self.users = np.repeat(users, n_neg_per_pos)
-        self.items = np.repeat(items, n_neg_per_pos)
+        users   = data.train["user"].to_numpy(dtype=np.int64)
+        items   = data.train["item"].to_numpy(dtype=np.int64)
+        ratings = data.train["rating"].to_numpy(dtype=np.float32)
+        self.users   = np.repeat(users,   n_neg_per_pos)
+        self.items   = np.repeat(items,   n_neg_per_pos)
+        self.ratings = np.repeat(ratings, n_neg_per_pos)
 
     def __len__(self) -> int:
         return len(self.users)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        user = int(self.users[idx])
-        pos  = int(self.items[idx])
-        seen = self.user_pos[user]
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        user   = int(self.users[idx])
+        pos    = int(self.items[idx])
+        rating = float(self.ratings[idx])
+        seen   = self.user_pos[user]
         while True:
             neg = int(self.rng.integers(self.n_items))
             if neg not in seen:
                 break
         return (
-            torch.tensor(user, dtype=torch.long),
-            torch.tensor(pos,  dtype=torch.long),
-            torch.tensor(neg,  dtype=torch.long),
+            torch.tensor(user,   dtype=torch.long),
+            torch.tensor(pos,    dtype=torch.long),
+            torch.tensor(rating, dtype=torch.float),
+            torch.tensor(neg,    dtype=torch.long),
         )
 
 
@@ -259,9 +287,12 @@ if __name__ == "__main__":
     print(f"  train   : {len(data.train):,} interactions")
     print(f"  val     : {len(data.val):,} rows")
     print(f"  test    : {len(data.test):,} rows")
+    print(f"  train columns : {list(data.train.columns)}  (must include rating)")
 
     assert len(data.val)  == data.n_users, "val must have one row per user"
     assert len(data.test) == data.n_users, "test must have one row per user"
+    assert "rating" in data.train.columns, "train must have rating column for WMF"
+    assert data.train["rating"].between(1, 5).all(), "ratings must be in [1, 5]"
 
     # No val/test items should appear in training
     train_set  = set(zip(data.train["user"], data.train["item"]))
@@ -271,14 +302,21 @@ if __name__ == "__main__":
     print(f"  test leaks into train : {test_leaks} (expect 0)")
     assert val_leaks == 0 and test_leaks == 0
 
-    print("\nBuilding eval negatives ...")
+    print("\nBuilding eval negatives (must use density=1.0 data) ...")
     negatives = build_eval_negatives(data, n_neg=99, seed=42)
     assert all(len(v) == 99 for v in negatives.values())
     print("  99 negatives per user — OK")
 
+    print("\nTrainDataset check (returns user, pos, rating, neg) ...")
+    ds = TrainDataset(data, n_neg_per_pos=4)
+    user, pos, rating, neg = ds[0]
+    assert rating.item() >= 1.0 and rating.item() <= 5.0, "rating out of range"
+    print(f"  sample: user={user.item()} pos={pos.item()} rating={rating.item()} neg={neg.item()} — OK")
+
     print("\nSparsity subsampling check:")
     for d in [0.8, 0.6, 0.4, 0.2]:
         d_data = load_ml1m(data_dir, density=d)
+        assert "rating" in d_data.train.columns
         print(f"  density={d:.0%}  train={len(d_data.train):,}")
 
     print("\nAll checks passed.")

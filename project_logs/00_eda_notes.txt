@@ -42,5 +42,164 @@ This is a well-known phenomenon called **positivity bias** (or "J-curve" in the 
 
 This is actually one of the justifications for treating ratings as **implicit feedback** (any observed rating = positive) rather than using the star values. Even a 1-star rating means the user *engaged* with that item, which is more signal than the millions of movies they never touched. The star value itself is noisy and biased; the *fact* that a rating exists is the cleaner signal for a retrieval task.
 
+--- data.py notes:
 
+Good questions — continuing:
+
+---
+
+**`->` in function signatures**
+
+Yes, essentially a comment — it's called a **type hint** and tells you what the function returns. Python doesn't enforce it at runtime, it's purely informational:
+
+```python
+def build_eval_negatives(...) -> Dict[int, List[int]]:
+```
+Means: "this function returns a dictionary where keys are ints (user indices) and values are lists of ints (negative item indices)." Your IDE uses it for autocomplete and catching bugs. Same idea as the type hints on the dataclass fields.
+
+---
+
+**Why density < 1.0 corrupts evaluation**
+
+Concrete example. Say User 42 has rated these 5 movies in their training pool:
+
+```
+Toy Story, Titanic, Matrix, Shrek, Gladiator
+```
+
+At density=0.4 we randomly keep 2, say: `Toy Story, Matrix`. The other 3 are dropped from training.
+
+Now when `build_eval_negatives` builds the "seen" set from this subsampled data, it thinks User 42 has only seen `{Toy Story, Matrix}` in training (plus val and test). So `Titanic, Shrek, Gladiator` look like unseen items and could get sampled as negatives.
+
+But the user *did* rate Titanic — it's a real positive interaction, just one we dropped for the sparsity experiment. If Titanic ends up as a negative for User 42, we're asking the model "did User 42 want Titanic?" and penalizing it for ranking Titanic high. That's wrong — we're corrupting the evaluation signal.
+
+By always calling `build_eval_negatives` on density=1.0 data, the seen set contains *all* rated movies, so none of them can leak into the negatives regardless of what density level you later train at.
+
+---
+
+**The `__x__` double underscore notation**
+
+These are called **dunder methods** (double underscore = "dunder"). They're Python's way of hooking into built-in language behavior. You define them in your class and Python calls them automatically in specific situations:
+
+| Method | When Python calls it |
+|--------|---------------------|
+| `__init__` | When you do `TrainDataset(data)` — sets up the object |
+| `__len__` | When you do `len(dataset)` |
+| `__getitem__` | When you do `dataset[42]` |
+
+You never call `dataset.__getitem__(42)` directly — you just write `dataset[42]` and Python translates that into the dunder call. PyTorch's `DataLoader` internally calls `len(dataset)` and `dataset[i]` to know how many samples there are and how to fetch each one.
+
+---
+
+**`class TrainDataset(Dataset)`**
+
+The `(Dataset)` part means `TrainDataset` **inherits** from PyTorch's `Dataset` class. Think of it as: `Dataset` is a template/contract that says "any class that wants to work with PyTorch's DataLoader must implement `__len__` and `__getitem__`." By writing `(Dataset)`, you're saying "my class follows that contract."
+
+What you get for free by inheriting:
+- `DataLoader` can wrap your dataset and handle batching, shuffling, and multi-worker loading automatically
+- You don't have to write any of that logic — PyTorch handles it as long as you implement those two dunder methods
+
+Concretely, in `train.py` you'll write:
+
+```python
+dataset = TrainDataset(data)
+loader  = DataLoader(dataset, batch_size=256, shuffle=True, num_workers=4)
+
+for user, pos, rating, neg in loader:
+    # PyTorch automatically calls dataset[i] repeatedly,
+    # groups results into batches of 256, and shuffles order each epoch
+```
+
+Without inheriting from `Dataset`, `DataLoader` wouldn't know how to work with your class. The inheritance is the handshake between your data and PyTorch's training infrastructure.
+
+
+
+**`eval_collate(batch)`**
+
+When PyTorch's `DataLoader` fetches a batch from `EvalDataset`, each sample is a tuple of `(user, pos_item, neg_items)`. The default collate just stacks them, which works fine for simple tensors. But `eval_collate` does something more specific — it **reorganizes the batch into a single ranked candidate list** that the evaluation metrics can directly work with.
+
+Step by step:
+
+```python
+users, pos_items, neg_items = zip(*batch)
+```
+`zip(*batch)` unpacks a list of tuples into separate groups. If batch size is 4:
+```
+batch = [(user0, pos0, negs0), (user1, pos1, negs1), ...]
+→ users     = (user0, user1, ...)
+→ pos_items = (pos0,  pos1,  ...)
+→ neg_items = (negs0, negs1, ...)
+```
+
+```python
+candidates = torch.cat([pos_items, neg_items], dim=1)  # (B, 100)
+```
+Glues the 1 positive and 99 negatives into one tensor of 100 candidates per user. The positive is always **column 0**.
+
+```python
+labels = torch.zeros_like(candidates, dtype=torch.float)
+labels[:, 0] = 1.0
+```
+Creates a label tensor of the same shape — all zeros except column 0 which is 1. So the model always knows "column 0 is the right answer" without needing to track which item is which.
+
+The evaluate function then scores all 100 candidates, sorts them by score, and checks where column 0 (the positive) lands in the ranking. If it's in the top 10 → contributes to NDCG@10 and HR@10.
+
+---
+
+**What the self-test is checking**
+
+It's a sequence of sanity checks that catch bugs before you waste GPU time. In order:
+
+**1 — Basic counts**
+```python
+print(f"n_users: {data.n_users}")
+print(f"train  : {len(data.train)}")
+```
+Confirms the data loaded at all and numbers look reasonable (~6,040 users, ~988K train rows).
+
+**2 — Rating column exists and is valid**
+```python
+assert "rating" in data.train.columns
+assert data.train["rating"].between(1, 5).all()
+```
+Catches the bug where we forgot to keep the rating column — which would silently break WMF.
+
+**3 — One val and one test row per user**
+```python
+assert len(data.val)  == data.n_users
+assert len(data.test) == data.n_users
+```
+Confirms leave-one-out worked — every single user has exactly one held-out item for val and one for test.
+
+**4 — No leakage**
+```python
+val_leaks  = sum(1 for r in data.val.itertuples()  if (r.user, r.item) in train_set)
+test_leaks = sum(1 for r in data.test.itertuples() if (r.user, r.item) in train_set)
+```
+The most important check. Verifies that no val or test item appears in training. If this fails, the model could have seen the answer during training — evaluation would be meaningless.
+
+**5 — Negatives are clean**
+```python
+assert all(len(v) == 99 for v in negatives.values())
+```
+Every user has exactly 99 negatives — no user got shortchanged.
+
+**6 — TrainDataset output shape**
+```python
+user, pos, rating, neg = ds[0]
+assert rating.item() >= 1.0 and rating.item() <= 5.0
+```
+Confirms the dataset returns 4 values (not 3 like before WMF), and the rating is a valid star value.
+
+**7 — Sparsity subsampling**
+```python
+for d in [0.8, 0.6, 0.4, 0.2]:
+    d_data = load_ml1m(data_dir, density=d)
+    assert "rating" in d_data.train.columns
+```
+Confirms subsampling produces fewer rows at each level AND that the rating column survives subsampling.
+
+---
+
+The philosophy: each assert answers the question *"if this were silently broken, would training still run?"* — yes it would, but the results would be garbage. These checks make silent bugs loud.
 

@@ -129,10 +129,30 @@ This downloads **MovieLens 1M** (~6 MB) into `data/raw/ml-1m/`.
 See [`documents/huggingface_setup.md`](documents/huggingface_setup.md) for the
 full walkthrough. Required before running any job on SCF or GCP.
 
-### Step 5 — Verify everything works
+### Step 5 — Set up HuggingFace checkpointing (GPU users only)
+
+See [`documents/huggingface_setup.md`](documents/huggingface_setup.md) for the
+full walkthrough. Required before running any job on SCF or GCP.
+
+### Step 6 — Validate the data pipeline
 
 ```bash
-python src/data.py data/raw/ml-1m    # should print "All checks passed"
+python src/data.py data/raw/ml-1m
+```
+
+This runs the full data pipeline — loads the raw data, remaps IDs, creates the
+train/val/test splits, builds evaluation negatives, and validates everything.
+Should print `All checks passed` at the end.
+
+Note: the splits are not saved to disk — they are recreated in memory at the
+start of each training run. Expected output:
+
+```
+n_users : 6,040
+n_items : 3,706
+train   : 988,129 interactions
+val     : 6,040 rows
+test    : 6,040 rows
 ```
 
 ---
