@@ -1,9 +1,9 @@
 # When Does Ranking Help? A Sparsity Analysis of Two-Stage Recommendation
 
-Ricardo Perez Castillo · [Teammate 2] · [Teammate 3] — CS 289A, UC Berkeley · Spring 2026
+CS 289A, UC Berkeley · Spring 2026
 
-**Core question:** Below how many interactions per user does adding a ranking stage on top of
-collaborative filtering stop helping — and start hurting?
+**Core question:** Below how many interactions per user does adding a ranking stage on top of collaborative filtering stop helping — and start hurting?
+
 
 → Full project vision, methodology, and decisions: [`documents/proposal.md`](documents/proposal.md)
 → Who owns what: [`documents/responsibilities.md`](documents/responsibilities.md)
@@ -67,8 +67,7 @@ conda env create -f environment.yml
 conda activate cs289-ranking
 ```
 
-Training will be slow locally. Use this for running the EDA notebook and
-testing data pipeline changes. Do not run the full sparsity sweep locally.
+Training will be slow locally. Use this for running the EDA notebook and testing data pipeline changes. Do not run the full sparsity sweep locally.
 
 ---
 
@@ -99,7 +98,7 @@ running the sweep → see [`documents/huggingface_setup.md`](documents/huggingfa
 
 ---
 
-#### Teammate 2 — GCP (GPU VM)
+#### Lucas — GCP (GPU VM)
 
 ```bash
 conda env create -f environment-gpu.yml
@@ -123,8 +122,7 @@ bash download_data.sh
 ```
 
 This downloads **MovieLens 1M** (~6 MB) into `data/raw/ml-1m/`.
-**Use only this dataset.** Do not use ml-32m or movie_dataset_public_final —
-both are gitignored and not part of this project.
+**Use only this dataset.** Do not use ml-32m or movie_dataset_public_final — both are gitignored and not part of this project.
 
 ### Step 4 — Set up HuggingFace checkpointing (GPU users only)
 
