@@ -1,0 +1,46 @@
+---
+
+**Occupation IDs — where's the mapping?**
+
+The mapping lives in the ml-1m `README` file (which I read earlier), and I already embedded it in the notebook inside the `occ_map` dictionary in cell 7:
+```python
+occ_map = {0:'other', 1:'academic', 2:'artist', 3:'clerical', 4:'student', ...}
+```
+There's no separate file — GroupLens just encoded it as integers and documented the key in the README. You're right that it's not useful for the models since we're doing pure collaborative filtering with no content features.
+
+**Zip codes — US only?**
+
+Yes, US only. MovieLens is a product of GroupLens at University of Minnesota and has always been a US-facing platform. All zip codes are 5-digit US postal codes, so no cross-country collision. Not useful for the project either way.
+
+---
+
+**Why density = ratings / (users × items)?**
+
+Think of the data as a matrix where every row is a user and every column is a movie. Each cell would hold a star rating *if* that user rated that movie. The matrix has `6,040 × 3,706 = ~22.4 million` cells total. Only `1,000,209` of those cells are actually filled in. So:
+
+```
+density = filled cells / total cells = 1,000,209 / 22,400,240 ≈ 4.47%
+```
+
+It's literally asking: *what fraction of all possible (user, movie) pairs were ever rated?*
+
+---
+
+**Sparsity = the zeros?**
+
+Exactly. The remaining ~95.5% of cells are empty — a user never rated that movie. In the matrix those are zeros (or "unobserved"). The whole challenge of collaborative filtering is making good recommendations using only that tiny 4.47% of signal. The more sparse, the harder the problem — which is exactly what your sparsity sweep is studying.
+
+---
+
+**Rating distribution skew — why?**
+
+This is a well-known phenomenon called **positivity bias** (or "J-curve" in the literature), and it makes intuitive sense for two reasons:
+
+1. **Selection bias**: people tend to watch movies they *expect* to like. You don't randomly pick films — you choose based on trailers, genre, friends' recommendations. So you're already pre-filtering toward things you'll probably enjoy.
+
+2. **Effort to rate badly**: giving a 1-star rating requires actively disliking something enough to bother rating it. Rating something 4 stars is easy and common. Giving a 1 is almost an act of hostility.
+
+This is actually one of the justifications for treating ratings as **implicit feedback** (any observed rating = positive) rather than using the star values. Even a 1-star rating means the user *engaged* with that item, which is more signal than the millions of movies they never touched. The star value itself is noisy and biased; the *fact* that a rating exists is the cleaner signal for a retrieval task.
+
+
+

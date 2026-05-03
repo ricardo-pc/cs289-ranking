@@ -1,0 +1,34 @@
+# GPU environment — Berkeley SCF (A4000/A5000) and GCP.
+# Does NOT include cpuonly, installs CUDA-enabled PyTorch via pip.
+#
+# One-time setup on SCF or GCP:
+#   conda env create -f environment-gpu.yml
+#   conda activate cs289-ranking-gpu
+#
+# Then install the right PyTorch wheel (check CUDA version with: nvidia-smi):
+#   CUDA 12.1 (most SCF nodes):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8 (older nodes):     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+# Note: the env name is cs289-ranking-gpu to avoid conflicts if you also
+# have the CPU env on the same machine.
+
+name: cs289-ranking-gpu
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - pandas>=2.1
+  - matplotlib>=3.8
+  - seaborn>=0.13
+  - scikit-learn>=1.4
+  - tqdm>=4.66
+  - jupyter
+  - ipykernel
+  - nbconvert
+  - pip
+  - pip:
+    # PyTorch: installed manually after env creation (see instructions above)
+    # so we can pick the right CUDA wheel.
+    - botorch

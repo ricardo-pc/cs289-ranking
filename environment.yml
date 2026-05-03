@@ -1,0 +1,29 @@
+# Local / CPU environment — use this if you're running on your laptop.
+# For GPU setups see environment-gpu.yml (SCF) or environment-gcp.yml (GCP).
+#
+# One-time setup:
+#   conda env create -f environment.yml
+#   conda activate cs289-ranking
+
+name: cs289-ranking
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - pandas>=2.1
+  - matplotlib>=3.8
+  - seaborn>=0.13
+  - scikit-learn>=1.4
+  - tqdm>=4.66
+  - jupyter
+  - ipykernel
+  - nbconvert
+  - pytorch>=2.2
+  - torchvision
+  - cpuonly          # CPU-only PyTorch build — fast to install, no CUDA
+  - pip
+  - pip:
+    - botorch        # for STAT 238 BO experiments only

@@ -1,102 +1,188 @@
-# CS 289A Project: Internal Team Document
+# CS 289A Final Project — Internal Proposal
 
-## When Does the Ranking Stage Help? A Sparsity Analysis of Two-Stage Recommendation
+## When Does Ranking Help? A Sparsity Analysis of Two-Stage Recommendation
 
-Ricardo Perez Castillo, Teammate 2, Teammate 3
+Ricardo Perez Castillo · [Teammate 2] · [Teammate 3] — Spring 2026
 
 ---
 
-## What we're doing and why
+## The Question
 
-We're building three recommendation systems of increasing complexity and measuring how each one performs as we artificially reduce how much data each user has. The goal is to find the crossover point: the number of per-user interactions below which the more complex ranking stage stops helping and may even hurt.
+Modern recommender systems are often built in two stages: a fast **retrieval** model
+generates a candidate set, then a more expensive **ranking** model re-orders it. The
+ranking stage adds complexity and compute cost. Is it always worth it?
 
-### The three systems
+We hypothesize that the answer depends on how much data each user has. A ranking model
+has more parameters and needs more signal to learn useful representations. For users with
+sparse histories — few interactions — the extra complexity becomes a liability. A simpler
+retrieval model with lower variance may actually win.
 
-| System | What it does | Complexity |
+**The finding we are looking for:** a crossover point — a number of interactions per user
+below which the ranking stage stops helping and the simpler model takes over.
+
+---
+
+## The Three Systems
+
+| System | Architecture | Complexity |
 |--------|-------------|------------|
-| **A: Matrix Factorization (MF)** | Learns a user embedding and an item embedding, scores by dot product. This is the simplest collaborative filtering baseline. | Low |
-| **B: Neural Collaborative Filtering (NCF)** | Same embeddings, but replaces the dot product with a multi-layer perceptron (MLP). Can capture nonlinear user-item interactions. | Medium |
-| **C: MF + Ranking MLP** | Uses MF to retrieve a candidate set, then a second MLP re-ranks those candidates. The ranker is trained with Bayesian Personalized Ranking (BPR) loss, a pairwise objective that pushes the score of observed (positive) items above unobserved (negative) items. | High |
+| **A — MF** | User + item embeddings, dot-product score | Low |
+| **B — NCF** | Same embeddings, score via MLP instead of dot product | Medium |
+| **C — MF + Ranker** | MF retrieves top-100 candidates; BPR-trained MLP re-ranks to top-10 | High |
 
-### The sparsity experiment
-
-For each user, we subsample their training interactions to **80%, 60%, 40%, and 20%** of their original history. We retrain all three systems at each level and evaluate. This gives us a curve of performance vs. density for each system, and we can read off where the curves cross.
-
-### Evaluation metrics
-
-- **NDCG@10** (Normalized Discounted Cumulative Gain at 10): measures ranking quality of the top 10 recommendations, giving more credit to relevant items ranked higher.
-- **Hit Rate@10**: binary — did the held-out item appear anywhere in the top 10?
-
-These metrics are standard in the RecSys literature and are what He et al. (2017) use.
-
-### Dataset
-
-**MovieLens 1M**: 1 million ratings from ~6,000 users on ~4,000 movies. Well-studied, clean, and small enough to iterate fast. We use leave-one-out evaluation (hold out each user's most recent interaction for testing).
+All three are trained end-to-end in PyTorch. The only thing that changes across conditions
+is the amount of training data available per user (the sparsity sweep).
 
 ---
 
-## Why this project (real motivation)
+## Dataset
 
-### For the class
-The rubric rewards a controlled comparison under matched conditions with a clear hypothesis. Our hypothesis is that more expressive models degrade faster under sparsity due to higher variance (bias-variance tradeoff from lecture). The sparsity sweep is the experiment we designed, and the crossover point is the finding.
+**MovieLens 1M** — 1,000,209 ratings from 6,040 users on 3,706 movies.
 
-### For interviews
-This project maps directly to real data science roles at companies like Uber, Spotify, and any two-sided marketplace. The core insight "complex ranking models stop helping for cold-start users", has immediate business implications:
-- Where should you invest modeling complexity vs. fall back to simpler heuristics?
-- How much user data do you need before deploying a ranker for a new user segment?
-- For new users entering a platform continuously, what's the right system to serve them?
+Key properties confirmed from EDA:
+- All users have ≥ 20 ratings (minimum guaranteed by the dataset)
+- Matrix density: ~4.47% — appropriately sparse for a RecSys benchmark
+- Item popularity follows a strong power law: top 20% of items cover ~80% of ratings
+- Rating distribution is right-skewed (positivity bias): peaks at 3–4 stars
+- Timestamps are usable for chronological leave-one-out splitting
 
-The interview pitch: *"I studied when adding a ranking stage on top of collaborative filtering stops helping for users with sparse histories. Below N interactions, simpler retrieval actually wins. That crossover tells you where to invest in modeling complexity."*
-
----
-
-## Course connections 
-
-| Course topic | How it shows up |
-|-------------|----------------|
-| Gradient descent (Lec 10-11) | MF minimizes regularized squared-error over embedding matrices U, V via SGD |
-| Cross-entropy + sigmoid (HW3 P1) | NCF and the ranking MLP use binary cross-entropy with sigmoid output |
-| Backpropagation (HW3 P3) | Gradients flow through MLP layers into embeddings via the chain rule |
-| L2 regularization | Applied to embedding matrices; directly analogous to regularized ERM from lecture |
-| Bias-variance tradeoff | The main analytical lens: more expressive models = higher variance = worse under sparsity |
-| BPR as logistic regression on pairs | L_BPR = -sum log σ(r_ui - r_uj) is logistic regression on pairwise score differences |
+We use **ml-1m only**. ml-32m (32M ratings, 200K users) was considered but ruled out:
+training NCF across 15 conditions would take 25+ hours of GPU time vs ~1 hour on ml-1m,
+which is not feasible within the project timeline.
 
 ---
 
-## Division of responsibilities
+## Data Pipeline Decisions (from EDA)
 
-| Member | Responsibilities |
-|--------|-----------------|
-| Ricardo | TBD |
-| Teammate 2 | TBD |
-| Teammate 3 | TBD |
-| All | TBD |
+**Implicit feedback with confidence weighting (WMF — Hu et al. 2008)**
+
+All observed ratings are treated as positive preference (label = 1), but the loss
+contribution is scaled by a confidence weight:
+
+$$c_{ui} = 1 + \alpha \cdot r_{ui}$$
+
+where $r_{ui}$ is the star rating (1–5) and $\alpha$ is a tunable hyperparameter.
+This preserves the information in star ratings without discarding low-rated interactions
+entirely. A 5-star rating contributes ~5× more signal than a 1-star. $\alpha$ is tuned
+via Bayesian Optimization (see cross-project note below).
+
+**Train / val / test split — He et al. (2017) leave-one-out protocol**
+- **TEST**: last interaction per user (by timestamp)
+- **VAL**: second-to-last interaction per user
+- **TRAIN**: all remaining interactions
+
+**Sparsity sweep**
+- Subsample TRAIN at `d` ∈ {1.0, 0.8, 0.6, 0.4, 0.2} — VAL and TEST are never touched
+- At 20% density, ~9.2% of users have fewer than 5 training interactions (cold-start regime)
+- No users are dropped at any density level — all 6,040 stay in every condition
+
+**Evaluation protocol**
+- For each user: sample 99 items they have NOT rated as negatives (fixed seed=42)
+- Rank the test item among the 100 (1 positive + 99 negatives)
+- Report NDCG@10 and HR@10 averaged over all 6,040 users
+- Negatives are fixed across models and density levels for fair comparison
+
+**Feature engineering: none**
+- Input is `(user_id, item_id, rating)` only — IDs remapped to contiguous 0-indexed integers
+- User demographics (gender, age, occupation) and movie genres excluded intentionally:
+  adding content features would confound the sparsity comparison
+
+**ID remapping**
+- UserIDs 1–6,040 → 0–6,039
+- MovieIDs: only the 3,706 IDs present in ratings.dat are kept (246 gap IDs from movies.dat
+  are skipped). Remapped to 0–3,705.
 
 ---
 
+## Methods
 
-## Implementation notes
+### Matrix Factorization (System A)
+Learns embedding matrices $U \in \mathbb{R}^{n \times k}$ and $V \in \mathbb{R}^{m \times k}$.
+Score for user $u$, item $i$: $\hat{r}_{ui} = u_u^\top v_i$.
+Loss: confidence-weighted BCE with online negative sampling.
 
-### Key decisions to make early
-- **Embedding dimension k**: MAYBE start with k=64, might sweep {32, 64, 128}
-- **Train/test split**: leave-one-out (standard for MovieLens evaluations)
-- **Negative sampling**: sample 99 negatives per positive for evaluation (standard protocol)
-- **Candidate set size for System C**: MF retrieves top-100 candidates, ranker reranks to top-10
+### Neural Collaborative Filtering (System B)
+Same user/item embeddings as MF, but the score is computed by a small MLP instead of
+dot product: $\hat{r}_{ui} = \text{MLP}([u_u \| v_i])$.
+Loss: same confidence-weighted BCE.
+Hyperparameters (embedding dim, MLP hidden sizes, learning rate, L2 regularization, $\alpha$)
+tuned via Bayesian Optimization — see cross-project note.
 
-### Libraries
-- **PyTorch** for all models
-- **NumPy/Pandas** for data processing
-- **Matplotlib/Seaborn** for figures
-- Consider **Weights & Biases** for experiment tracking (rubric's practical advice says "log everything")
+### MF + Ranking MLP (System C)
+**Stage 1 (retrieval):** MF scores all items for each user; top-100 candidates selected.
+**Stage 2 (ranking):** A separate MLP re-ranks the 100 candidates.
+The ranker is trained with BPR loss: $\mathcal{L}_\text{BPR} = -\sum \log \sigma(\hat{r}_{ui} - \hat{r}_{uj})$,
+a pairwise objective that pushes observed items above unobserved ones.
 
-### What the main figure should look like
-An x-axis of per-user interaction density (20%, 40%, 60%, 80%, 100%) with three lines (Systems A, B, C) showing NDCG@10. The crossover point — where System A overtakes B and/or C — is the key finding. A second panel or subplot for HR@10.
+### Sparsity sweep
+All three systems are retrained from scratch at each density level `d`. This gives 15
+independent training runs (3 systems × 5 densities). Results are plotted as NDCG@10
+vs. density — the crossover point is the key finding.
 
 ---
 
-## References to cite
+## Cross-Project Note (STAT 238 — Bayesian Optimization)
 
-- He et al. (2017), "Neural Collaborative Filtering" — the NCF paper, our primary baseline reference
-- Koren et al. (2009), "Matrix Factorization Techniques for Recommender Systems" — MF foundations
-- Rendle et al. (2009), "BPR: Bayesian Personalized Ranking from Implicit Feedback" — BPR loss
-- Harper & Konstan (2015), "The MovieLens Datasets" — dataset citation
+A concurrent solo project in STAT 238 implements Bayesian Optimization using a Gaussian
+Process surrogate and Expected Improvement acquisition function. One of its two experiments
+tunes NCF hyperparameters on this exact dataset, with validation NDCG@10 as the objective.
+
+**Dependency:** NCF must be training cleanly before the BO sweep can run (~25–30 evals,
+~3–5 min each on the GPU cluster). The best hyperparameter configuration found by BO
+(including $\alpha$) flows back into this project as the NCF baseline for the sparsity sweep.
+
+**What this means for sequencing:** NCF implementation is on the critical path for both
+projects. Target: working NCF by May 3–4.
+
+---
+
+## Analytical Framing (Course Connection)
+
+The bias-variance tradeoff from CS 289A lecture is the analytical lens for interpreting
+results. More expressive models (NCF, Ranker) have lower bias but higher variance — they
+need more data to reliably estimate their larger parameter space. Under sparsity, variance
+dominates and simpler models win. The sparsity sweep makes this concrete and measurable.
+
+| CS 289A topic | How it appears |
+|--------------|---------------|
+| Gradient descent | MF/NCF trained via SGD on embedding matrices |
+| Cross-entropy + sigmoid | Confidence-weighted BCE for MF and NCF |
+| Backpropagation | Gradients flow through MLP into embeddings |
+| L2 regularization | Applied to all embedding matrices |
+| Bias-variance tradeoff | Main lens for interpreting the sparsity curves |
+| BPR as logistic regression | $\mathcal{L}_\text{BPR}$ is logistic regression on pairwise score differences |
+
+---
+
+## Timeline
+
+| Date | Milestone |
+|------|-----------|
+| May 3–4 | NCF training pipeline complete and validated |
+| May 4–5 | BO sweep kicked off on SCF (STAT 238 Exp. 2) |
+| May 5–6 | MF baseline + two-stage ranker implemented |
+| May 6–8 | Full sparsity sweep running (15 conditions) |
+| May 8–9 | BO results back → NCF hyperparameters locked |
+| May 9–11 | Results finalized, figures generated |
+| May 11–13 | Report drafted |
+| May 14 | Final review and submission |
+
+---
+
+## Main Deliverable Figure
+
+X-axis: per-user interaction density (20%, 40%, 60%, 80%, 100%)
+Y-axis: NDCG@10 (primary) and HR@10 (secondary panel)
+Three lines: MF (A), NCF (B), MF+Ranker (C)
+
+The crossover point — where line A overtakes B and/or C — is the key finding.
+
+---
+
+## References
+
+- He et al. (2017), "Neural Collaborative Filtering" — NeurIPS
+- Koren et al. (2009), "Matrix Factorization Techniques for Recommender Systems" — IEEE Computer
+- Rendle et al. (2009), "BPR: Bayesian Personalized Ranking from Implicit Feedback" — UAI
+- Hu et al. (2008), "Collaborative Filtering for Implicit Feedback Datasets" — ICDM
+- Harper & Konstan (2015), "The MovieLens Datasets" — ACM TiiS
