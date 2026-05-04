@@ -12,27 +12,30 @@ Check off tasks as they are merged into `main`.
 - [x] `download_data.sh`
 - [x] SLURM job script (`jobs/train_scf.sh`)
 - [x] HuggingFace checkpoint repo configured
+- [x] SCF environment set up (conda, PyTorch cu121 wheel, git SSH auth)
 
 ## Data & EDA
 - [x] EDA notebook (`notebooks/01_eda.ipynb`)
 - [x] `src/data.py` — load, remap IDs, leave-one-out split, confidence weights, negative sampling
-- [ ] Run `src/data.py` self-test and confirm all checks pass
+- [x] `src/data.py` self-test passes all checks
 
 ## Models
-- [ ] `src/models.py` — MF (embedding → dot product)
-- [ ] `src/models.py` — NCF (embedding → MLP)
+- [ ] `src/models.py` — MF (embedding → dot product) ← teammate
+- [x] `src/models.py` — NCF (embedding → MLP + confidence-weighted BCE loss)
 - [ ] `src/models.py` — two-stage ranker (MF retrieval + BPR ranking MLP)
 
 ## Training & Evaluation
-- [ ] `src/train.py` — training loop with confidence-weighted BCE, checkpoint saving
-- [ ] `src/evaluate.py` — NDCG@10 and HR@10
-- [ ] Validate MF trains end-to-end (`python src/train.py --model mf --density 1.0`)
-- [ ] Validate NCF trains end-to-end (`python src/train.py --model ncf --density 1.0`)
+- [x] `src/train.py` — training loop with confidence-weighted BCE, checkpoint saving
+- [x] `src/utils.py` — shared `evaluate()` function (NDCG@10, HR@10) ← to be created
+- [ ] `src/evaluate.py` — standalone test-set evaluator (imports from utils.py) ← in progress
+- [x] Validate NCF trains end-to-end — smoke test passed (density=0.2, 1 epoch, CPU + GPU)
+- [x] NCF baseline run complete (density=1.0, 20 epochs, GPU) — val NDCG@10=0.3944, HR@10=0.6834
+- [ ] Validate MF trains end-to-end (`python src/train.py --model mf --density 1.0`) ← after teammate adds MF
 - [ ] Validate ranker trains end-to-end (`python src/train.py --model ranker --density 1.0`)
 
 ## Hyperparameter Tuning
-- [ ] Kick off Bayesian Optimization sweep on SCF to tune NCF hyperparameters
-- [ ] Lock in best NCF configuration from BO results
+- [ ] Kick off Bayesian Optimization sweep on SCF (STAT 238 repo) — 25-30 trials, tunes emb_dim, mlp_layers, lr, l2, alpha
+- [ ] Lock in best NCF configuration θ* from BO results
 
 ## Sparsity Sweep
 - [ ] `src/sparsity.py` — orchestrates all 15 runs (3 models × 5 densities)

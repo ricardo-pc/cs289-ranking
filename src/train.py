@@ -28,6 +28,7 @@ from torch.utils.data import DataLoader
 # Local imports — run from repo root so Python finds src/
 from data import load_ml1m, build_eval_negatives, TrainDataset, EvalDataset, eval_collate
 from models import NCF, confidence_weighted_bce
+from utils import evaluate
 
 
 # ---------------------------------------------------------------------------
@@ -158,86 +159,6 @@ def train_one_epoch(
         n_batches  += 1
 
     return total_loss / n_batches  # mean loss over the epoch
-
-
-# Evaluation: NDCG@10 and HR@10
-
-def evaluate(
-    model: torch.nn.Module,
-    loader: DataLoader,
-    device: torch.device,
-) -> tuple[float, float]:
-    """
-    Compute NDCG@10 and HR@10 using the leave-one-out protocol (He et al. 2017).
-
-    For each user:
-        - 100 candidates: 1 positive (the held-out item) + 99 pre-sampled negatives
-        - Score all 100 with the model
-        - Rank by score descending
-        - The positive is always at column 0 of the candidates tensor (from eval_collate)
-
-    HR@10 (Hit Rate):
-        1 if the positive item appears in the top 10, else 0.
-        Measures whether the model can surface the relevant item at all.
-
-    NDCG@10 (Normalized Discounted Cumulative Gain):
-        1 / log2(rank + 1) if rank <= 10, else 0.
-        Rewards ranking the positive item higher — rank 1 scores 1.0, rank 2 scores 0.63, etc.
-        The log2 discount is the same DCG formula from information retrieval.
-
-    Args:
-        model  : trained NCF or MF instance
-        loader : DataLoader wrapping EvalDataset, using eval_collate
-        device : torch.device
-    Returns:
-        (ndcg_at_10, hr_at_10) — mean over all users, values in [0, 1]
-    """
-    model.eval()  # disable dropout for deterministic scoring
-
-    ndcg_scores = []
-    hr_scores   = []
-
-    with torch.no_grad():  # no gradients needed during evaluation — saves memory and time
-        for users, candidates, _ in loader:
-            # users      : (B,)
-            # candidates : (B, 100) — col 0 is the positive item, cols 1-99 are negatives
-            users      = users.to(device)
-            candidates = candidates.to(device)
-
-            B = users.size(0)
-
-            # Score all 100 candidates for each user in the batch.
-            # Flatten to (B*100,), run through model, reshape back to (B, 100).
-            users_expanded = users.repeat_interleave(100)  # (B*100,) — each user repeated 100 times
-            items_flat     = candidates.view(-1)           # (B*100,) — all candidate items flattened
-
-            scores = model(users_expanded, items_flat)     # (B*100,) — one score per (user, item) pair
-            scores = scores.view(B, 100)                   # (B, 100) — restore batch structure
-
-            # Rank of the positive item (column 0).
-            # Count how many of the 100 items scored strictly higher than the positive.
-            # Add 1 to convert to 1-indexed rank (0 items scored higher = rank 1 = best possible).
-            pos_score = scores[:, 0].unsqueeze(1)          # (B, 1)
-            rank = (scores > pos_score).sum(dim=1) + 1     # (B,) — 1-indexed rank of positive
-
-            # HR@10: 1 if positive landed in top 10, else 0
-            hit = (rank <= 10).float()                     # (B,)
-
-            # NDCG@10: 1/log2(rank+1) if in top 10, else 0
-            # torch.log2 applies element-wise; where() selects between two tensors by condition
-            ndcg = torch.where(
-                rank <= 10,
-                1.0 / torch.log2(rank.float() + 1),
-                torch.zeros(B, device=device),
-            )                                              # (B,)
-
-            ndcg_scores.append(ndcg.cpu())
-            hr_scores.append(hit.cpu())
-
-    all_ndcg = torch.cat(ndcg_scores).mean().item()
-    all_hr   = torch.cat(hr_scores).mean().item()
-
-    return all_ndcg, all_hr
 
 
 # Main: wires everything together
