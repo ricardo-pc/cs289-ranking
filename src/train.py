@@ -313,7 +313,7 @@ def main():
             torch.save(model.state_dict(), ckpt_path)
 
     # Load best checkpoint and report final val metrics
-    model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
     final_ndcg, final_hr = evaluate(model, val_loader, device)
 
     print(f"\nBest val  NDCG@10 = {final_ndcg:.4f}  HR@10 = {final_hr:.4f}")
