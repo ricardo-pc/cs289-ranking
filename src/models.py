@@ -104,6 +104,47 @@ class NCF(nn.Module):
         return torch.sigmoid(logit).squeeze(1) # (B,) — squeeze out the last dim
 
 
+# Model A - Matrix Factorization (MF)
+
+class MF(nn.Module):
+    """
+    Matrix Factorization baseline.
+
+    Architecture:
+        user_id -> user embedding (B, emb_dim) -+
+                                                 +- dot product -> sigmoid -> y_hat
+        item_id -> item embedding (B, emb_dim) -+
+
+    Scoring is a simple inner product: score = sigmoid(p_u · q_i).
+    Compared to NCF, there is no MLP — interactions are assumed to be linear.
+
+    Args:
+        n_users : number of unique users (embedding table rows)
+        n_items : number of unique items (embedding table rows)
+        emb_dim : embedding dimension k (default 64, same as NCF for fair comparison)
+    """
+
+    def __init__(self, n_users: int, n_items: int, emb_dim: int = 64):
+        super().__init__()
+        self.user_emb = nn.Embedding(n_users, emb_dim)
+        self.item_emb = nn.Embedding(n_items, emb_dim)
+        nn.init.normal_(self.user_emb.weight, mean=0, std=0.01)
+        nn.init.normal_(self.item_emb.weight, mean=0, std=0.01)
+
+    def forward(self, user_ids: torch.Tensor, item_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            user_ids : (B,) integer tensor of user indices
+            item_ids : (B,) integer tensor of item indices
+        Returns:
+            y_hat    : (B,) float tensor of predicted interaction probabilities in (0, 1)
+        """
+        p_u = self.user_emb(user_ids)          # (B, emb_dim)
+        q_i = self.item_emb(item_ids)          # (B, emb_dim)
+        dot = (p_u * q_i).sum(dim=1)           # (B,) element-wise product then sum = dot product
+        return torch.sigmoid(dot)              # (B,)
+
+
 # Shared loss function (used by both NCF and MF)
 
 def confidence_weighted_bce(
