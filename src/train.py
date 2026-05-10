@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 
 # Local imports — run from repo root so Python finds src/
 from data import load_ml1m, build_eval_negatives, TrainDataset, EvalDataset, eval_collate
-from models import NCF, confidence_weighted_bce
+from models import NCF, MF, confidence_weighted_bce
 from utils import evaluate
 
 
@@ -203,7 +203,11 @@ def main():
             dropout    = args.dropout,
         ).to(device)
     else:
-        raise NotImplementedError("MF not yet implemented — coming soon")
+        model = MF(
+            n_users = data.n_users,
+            n_items = data.n_items,
+            emb_dim = args.emb_dim,
+        ).to(device)
 
     # Adam optimizer with L2 weight decay (ridge regularization on all parameters)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2)
