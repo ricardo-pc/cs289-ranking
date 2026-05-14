@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 
 # Local imports — run from repo root so Python finds src/
 from data import load_ml1m, build_eval_negatives, TrainDataset, EvalDataset, eval_collate
-from models import NCF, MF, confidence_weighted_bce
+from models import NCF, MF, Ranker, confidence_weighted_bce, bpr_loss
 from utils import evaluate
 
 
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
                         help="fraction of training interactions to keep (0 < d <= 1.0)")
 
     # Model
-    parser.add_argument("--model",     type=str,   default="ncf", choices=["ncf", "mf"],
+    parser.add_argument("--model",     type=str,   default="ncf", choices=["ncf", "mf", "ranker"],
                         help="which model architecture to train")
     parser.add_argument("--emb-dim",   type=int,   default=64,
                         help="embedding dimension k (size of p_u and q_i)")
@@ -73,6 +73,14 @@ def parse_args() -> argparse.Namespace:
                         help="WMF confidence scaling: c_ui = 1 + alpha * rating")
     parser.add_argument("--n-neg",     type=int,   default=4,
                         help="negative samples per positive in training")
+
+    # Ranker-specific
+    parser.add_argument("--mf-checkpoint", type=str, default=None,
+                        help="path to a pretrained MF .pt checkpoint to initialise ranker embeddings")
+    parser.add_argument("--freeze-emb", action="store_true", default=True,
+                        help="freeze MF embeddings when training the ranker (default: True)")
+    parser.add_argument("--no-freeze-emb", dest="freeze_emb", action="store_false",
+                        help="fine-tune MF embeddings jointly with the ranking MLP")
 
     # Infrastructure
     parser.add_argument("--device",    type=str,   default="cpu",
@@ -161,6 +169,52 @@ def train_one_epoch(
     return total_loss / n_batches  # mean loss over the epoch
 
 
+def train_ranker_epoch(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> float:
+    """
+    One BPR training epoch for the Ranker.
+
+    Reuses the same TrainDataset loader as MF/NCF (yields user, pos, rating, neg).
+    The rating is ignored — BPR only needs positive and negative item indices.
+    Loss pushes pos score above neg score for every pair in the batch.
+
+    Args:
+        model     : Ranker instance (already on device)
+        loader    : DataLoader wrapping TrainDataset
+        optimizer : Adam optimizer (MLP params only if embeddings are frozen)
+        device    : torch.device to run on
+    Returns:
+        mean BPR loss over all batches
+    """
+    model.train()
+
+    total_loss = 0.0
+    n_batches  = 0
+
+    for user, pos, rating, neg in loader:
+        user = user.to(device)  # (B,)
+        pos  = pos.to(device)   # (B,)
+        neg  = neg.to(device)   # (B,) — rating ignored for BPR
+
+        pos_scores = model(user, pos)  # (B,) raw logits for positive items
+        neg_scores = model(user, neg)  # (B,) raw logits for negative items
+
+        loss = bpr_loss(pos_scores, neg_scores)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+        n_batches  += 1
+
+    return total_loss / n_batches
+
+
 # Main: wires everything together
 
 def main():
@@ -202,15 +256,34 @@ def main():
             mlp_layers = args.mlp_layers,
             dropout    = args.dropout,
         ).to(device)
-    else:
+    elif args.model == "mf":
         model = MF(
             n_users = data.n_users,
             n_items = data.n_items,
             emb_dim = args.emb_dim,
         ).to(device)
+    else:  # ranker
+        model = Ranker(
+            n_users    = data.n_users,
+            n_items    = data.n_items,
+            emb_dim    = args.emb_dim,
+            mlp_layers = args.mlp_layers,
+            dropout    = args.dropout,
+        ).to(device)
+        if args.mf_checkpoint:
+            print(f"  Loading MF embeddings from {args.mf_checkpoint} (freeze={args.freeze_emb}) ...")
+            model.load_mf_embeddings(args.mf_checkpoint, device, freeze=args.freeze_emb)
+        else:
+            print("  Warning: no --mf-checkpoint supplied; ranker embeddings are random.")
 
-    # Adam optimizer with L2 weight decay (ridge regularization on all parameters)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2)
+    # Optimizer: when ranker embeddings are frozen, only train the MLP parameters
+    if args.model == "ranker" and args.freeze_emb and args.mf_checkpoint:
+        trainable = [p for n, p in model.named_parameters() if "emb" not in n]
+        print(f"  Optimising {sum(p.numel() for p in trainable):,} MLP parameters (embeddings frozen).")
+    else:
+        trainable = list(model.parameters())
+
+    optimizer = optim.Adam(trainable, lr=args.lr, weight_decay=args.l2)
 
     # Checkpoint directory
     save_dir = Path(args.save_dir)
@@ -226,7 +299,10 @@ def main():
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
 
-        train_loss        = train_one_epoch(model, train_loader, optimizer, args.alpha, device)
+        if args.model == "ranker":
+            train_loss = train_ranker_epoch(model, train_loader, optimizer, device)
+        else:
+            train_loss = train_one_epoch(model, train_loader, optimizer, args.alpha, device)
         val_ndcg, val_hr  = evaluate(model, val_loader, device)
         elapsed           = time.time() - t0
 

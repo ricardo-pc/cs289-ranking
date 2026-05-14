@@ -3,11 +3,12 @@ models.py - Model architectures for the sparsity analysis
 
 Models:
   - NCF   : Neural Collaborative Filtering (He et al. 2017) - Model B
-  - MF    : Matrix Factorization baseline                    - Model A  (TODO)
-  - Ranker: MF retrieval + BPR-trained ranking MLP           - Model C  (TODO)
+  - MF    : Matrix Factorization baseline                    - Model A
+  - Ranker: MF retrieval + BPR-trained ranking MLP           - Model C
 
-Loss:
+Loss functions:
   - confidence_weighted_bce : WMF-style BCE with per-sample confidence weights
+  - bpr_loss                : Bayesian Personalized Ranking pairwise loss
 """
 
 import torch
@@ -185,3 +186,127 @@ def confidence_weighted_bce(
 
     # Scale each sample's loss by its confidence weight, then average
     return (confidence * bce).mean()
+
+
+# BPR loss (used by Ranker)
+
+def bpr_loss(
+    pos_scores: torch.Tensor,  # (B,) raw scores for positive items
+    neg_scores: torch.Tensor,  # (B,) raw scores for negative items
+) -> torch.Tensor:
+    """
+    Bayesian Personalized Ranking loss (Rendle et al. 2009).
+
+    Pushes the score of each observed (positive) item above its paired
+    negative. Derived from maximising the posterior probability of the
+    observed preference ordering:
+
+        L_BPR = -mean( log( sigma( score_pos - score_neg ) ) )
+
+    The model is trained to make pos_score > neg_score for every pair.
+    Unlike BCE, BPR does not require absolute probability calibration;
+    it only cares about the relative ordering within each pair.
+
+    Args:
+        pos_scores : raw logits for positive (observed) items
+        neg_scores : raw logits for negative (unobserved) items
+    Returns:
+        scalar mean loss (lower is better)
+    """
+    return -torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10).mean()
+
+
+# Model C - Two-Stage Ranker
+
+class Ranker(nn.Module):
+    """
+    Two-stage ranking model: MF retrieval + BPR-trained scoring MLP.
+
+    Architecture:
+        user_id -> user embedding (B, emb_dim) -+
+                                                 +- concat -> MLP -> raw logit
+        item_id -> item embedding (B, emb_dim) -+
+
+    The embeddings are initialised from a pretrained MF checkpoint and
+    optionally frozen so that only the ranking MLP is trained. This gives
+    a clean two-stage pipeline: MF handles retrieval, the MLP handles
+    fine-grained reranking.
+
+    Returns raw logits (no sigmoid) because BPR loss operates on score
+    differences, and sigmoid is monotone so ranking is unaffected.
+
+    Args:
+        n_users    : number of unique users
+        n_items    : number of unique items
+        emb_dim    : embedding dimension (must match the pretrained MF)
+        mlp_layers : hidden layer sizes for the ranking MLP
+        dropout    : dropout rate in MLP layers
+    """
+
+    def __init__(
+        self,
+        n_users: int,
+        n_items: int,
+        emb_dim: int = 64,
+        mlp_layers: List[int] = [64, 32],
+        dropout: float = 0.2,
+    ):
+        super().__init__()
+
+        self.user_emb = nn.Embedding(n_users, emb_dim)
+        self.item_emb = nn.Embedding(n_items, emb_dim)
+
+        # Ranking MLP: concat embeddings -> hidden layers -> scalar score
+        layers = []
+        in_dim = 2 * emb_dim
+        for h in mlp_layers:
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
+            in_dim = h
+        layers.append(nn.Linear(in_dim, 1))
+        self.mlp = nn.Sequential(*layers)
+
+        # Xavier init for MLP; embeddings will be overwritten by load_mf_embeddings
+        self._init_mlp()
+
+    def _init_mlp(self):
+        for layer in self.mlp:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+    def load_mf_embeddings(
+        self,
+        checkpoint_path: str,
+        device: torch.device,
+        freeze: bool = True,
+    ) -> None:
+        """
+        Copy user and item embeddings from a saved MF state dict.
+
+        Args:
+            checkpoint_path : path to a .pt file saved by train.py --model mf
+            device          : device the model lives on
+            freeze          : if True, set requires_grad=False on the embeddings
+                              so the optimizer only updates the MLP
+        """
+        state = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        self.user_emb.weight.data.copy_(state["user_emb.weight"])
+        self.item_emb.weight.data.copy_(state["item_emb.weight"])
+        if freeze:
+            self.user_emb.weight.requires_grad_(False)
+            self.item_emb.weight.requires_grad_(False)
+
+    def forward(self, user_ids: torch.Tensor, item_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            user_ids : (B,) integer tensor of user indices
+            item_ids : (B,) integer tensor of item indices
+        Returns:
+            scores   : (B,) raw logits (higher = more relevant)
+        """
+        p_u = self.user_emb(user_ids)        # (B, emb_dim)
+        q_i = self.item_emb(item_ids)        # (B, emb_dim)
+        x   = torch.cat([p_u, q_i], dim=1)  # (B, 2*emb_dim)
+        return self.mlp(x).squeeze(1)        # (B,) raw logit
