@@ -16,7 +16,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data import load_ml1m, build_eval_negatives, EvalDataset, eval_collate
-from models import NCF
+from models import NCF, MF, Ranker
 from utils import evaluate
 
 
@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
                         help="density the model was trained on — used to load the right data split")
     parser.add_argument("--checkpoint",  type=str, required=True,
                         help="path to saved .pt checkpoint, e.g. checkpoints/ncf_density1.0.pt")
-    parser.add_argument("--model",       type=str, default="ncf", choices=["ncf", "mf"])
+    parser.add_argument("--model",       type=str, default="ncf", choices=["ncf", "mf", "ranker"])
     parser.add_argument("--emb-dim",     type=int, default=64)
     parser.add_argument("--mlp-layers",  type=int, nargs="+", default=[256, 128, 64])
     parser.add_argument("--dropout",     type=float, default=0.2)
@@ -65,8 +65,20 @@ def main():
             mlp_layers = args.mlp_layers,
             dropout    = args.dropout,
         ).to(device)
-    else:
-        raise NotImplementedError("MF not yet implemented")
+    elif args.model == "mf":
+        model = MF(
+            n_users = data.n_users,
+            n_items = data.n_items,
+            emb_dim = args.emb_dim,
+        ).to(device)
+    else:  # ranker
+        model = Ranker(
+            n_users    = data.n_users,
+            n_items    = data.n_items,
+            emb_dim    = args.emb_dim,
+            mlp_layers = args.mlp_layers,
+            dropout    = args.dropout,
+        ).to(device)
 
     ckpt = Path(args.checkpoint)
     if not ckpt.exists():
