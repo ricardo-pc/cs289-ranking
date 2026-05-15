@@ -1,11 +1,8 @@
 jobs/logs/*.out
 jobs/logs/*.err
-data/raw/ml-1m/
-data/raw/ml-1m.zip
-data/raw/ml-32m/
-data/raw/ml-32m.zip
-data/raw/movie_dataset_public_final/
-data/processed/
+data/
+checkpoints/
+experiments/
 __pycache__/
 *.pyc
 .DS_Store
@@ -16,4 +13,5 @@ runs/
 *.pth
 *.pt
 .claude
+project_logs/
 
