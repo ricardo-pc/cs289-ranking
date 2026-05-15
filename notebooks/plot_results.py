@@ -53,12 +53,12 @@ ax2.annotate(
 )
 
 for ax, ylabel, title in [
-    (ax1, "NDCG@10", "No ranking benefit: MF leads on NDCG@10 at every density"),
-    (ax2, "HR@10",   "Ranking stage improves hit rate below 40% density"),
+    (ax1, "NDCG@10", "Ranking Quality (NDCG@10)"),
+    (ax2, "HR@10",   "Hit Rate (HR@10)"),
 ]:
-    ax.set_xlabel("Training density $d$", fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.set_xlabel("Training density $d$", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_title(title, fontsize=10, fontweight="bold")
     ax.set_xticks(densities)
     ax.set_xticklabels([str(d) for d in densities])
     ax.legend(fontsize=9)
@@ -70,12 +70,12 @@ plt.subplots_adjust(top=0.82)
 
 fig.suptitle(
     "MF Outperforms More Complex Models at Every Density Level",
-    fontsize=13, fontweight="bold", y=0.98,
+    fontsize=11, fontweight="bold", y=0.98,
 )
 fig.text(
     0.5, 0.90,
-    "A ranking stage does not improve ranking quality (NDCG) but gains a hit rate advantage in sparse regimes — adding complexity rarely pays off",
-    ha="center", fontsize=9, style="italic", color="#444444",
+    "A ranking stage does not improve ranking quality but gains a hit rate advantage in sparse regimes — adding complexity does not pay off",
+    ha="center", fontsize=8.5, style="italic", color="#444444",
 )
 
 plt.savefig("figures/sparsity_results.pdf", bbox_inches="tight", dpi=150)
